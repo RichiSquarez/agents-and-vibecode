@@ -1,33 +1,55 @@
 """
-Run the YoutuberAgent against a list of channels.
+Run the YoutuberAgent through the full workflow:
 
-The agent will, step by step:
-  1. log in once
-  2. for each channel, open it, subscribe, watch ~30s of the latest video
-  3. close the browser
+  login → for each channel (search → subscribe → watch fully → like)
+        → review own channel bio + links (edit bio if placeholder,
+          shorten ORIGINAL_LINK via clck.ru and add it as "Гайд"/"Инструкция"
+          if no link is present)
+        → close browser
 
-Make sure .env contains ANTHROPIC_API_KEY, YOUTUBE_EMAIL, YOUTUBE_PASSWORD.
-Also run once:  playwright install chromium
+Requirements:
+  - .env contains ANTHROPIC_API_KEY, YOUTUBE_EMAIL, YOUTUBE_PASSWORD
+  - Run once:   playwright install chromium
 """
 
 from agents import YoutuberAgent
 
 
-CHANNELS = [
-    "https://www.youtube.com/@mkbhd",
-    "https://www.youtube.com/@veritasium",
-    "https://www.youtube.com/@LinusTechTips",
+CHANNEL_QUERIES = [
+    "MKBHD",
+    "Veritasium",
+    "Linus Tech Tips",
 ]
+
+# The link the agent will shorten via clck.ru and add to your channel
+# if no external link is currently set on your channel.
+ORIGINAL_LINK = "https://example.com/my-real-destination"
+
+# Optional — the agent will only replace the bio if it currently looks empty
+# or placeholder-ish. Leave as None to never overwrite.
+DESIRED_BIO: str | None = (
+    "Привет! Здесь я делюсь гайдами и инструкциями по интересным темам. "
+    "Подпишись, чтобы ничего не пропустить."
+)
 
 
 def main() -> None:
     agent = YoutuberAgent()
-    task = (
-        "Please log in to YouTube, then go through this list of channels ONE "
-        "AT A TIME and for each one: subscribe, then watch the latest video "
-        "for 30 seconds, then move to the next. Close the browser when done.\n\n"
-        f"Channels:\n" + "\n".join(f"- {c}" for c in CHANNELS)
-    )
+
+    task = f"""Please run the full YouTube workflow described in your instructions.
+
+Channel queries (in order):
+{chr(10).join(f"- {q}" for q in CHANNEL_QUERIES)}
+
+original_link = {ORIGINAL_LINK!r}
+desired_bio   = {DESIRED_BIO!r}
+
+For each channel: search_channel → subscribe → play_latest_video →
+watch_current_video_fully → like_current_video, then move on.
+After all channels, go to my channel, read the about info, and apply the
+bio / link maintenance rules from your system prompt. Finally close the
+browser and give me a short per-channel summary."""
+
     final = agent.run(task)
     print("\n=== Agent final reply ===\n")
     print(final)

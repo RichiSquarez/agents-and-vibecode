@@ -1,0 +1,124 @@
+============================================================
+agents-and-vibecode — dependencies & install guide
+============================================================
+
+This project requires Python 3.11+ and a Chromium install managed by
+Playwright. Everything else is plain pip packages.
+
+
+1. Python version
+-----------------
+Check you have Python 3.11 or newer:
+
+    python --version            # Linux / macOS
+    py --version                # Windows
+
+If you don't, install from https://www.python.org/downloads/ or via your
+OS package manager (apt / brew / choco).
+
+
+2. (Recommended) Create and activate a virtual environment
+----------------------------------------------------------
+Linux / macOS:
+
+    python -m venv .venv
+    source .venv/bin/activate
+
+Windows (PowerShell):
+
+    python -m venv .venv
+    .\.venv\Scripts\Activate.ps1
+
+
+3. Install Python dependencies
+------------------------------
+Option A — editable install from pyproject.toml (preferred, gets dev tools too):
+
+    pip install -e ".[dev]"
+
+Option B — install just the runtime libraries individually:
+
+    pip install "anthropic>=0.49.0"      # Claude SDK
+    pip install "python-dotenv>=1.0.0"   # .env loader
+    pip install "playwright>=1.44.0"     # browser automation
+
+Dev-only extras (not required to run the agents):
+
+    pip install "pytest>=8.0" "pytest-asyncio>=0.23" "ruff>=0.4"
+
+
+4. Install the Chromium browser used by Playwright
+--------------------------------------------------
+Playwright ships its own browser binaries. After installing the Python
+package you MUST run:
+
+    playwright install chromium
+
+On Linux, also install the system libraries Chromium needs:
+
+    playwright install-deps chromium     # may require sudo
+
+
+5. Create a .env file with your secrets
+---------------------------------------
+Copy the template and fill in the values:
+
+    cp .env.example .env                 # Linux / macOS
+    copy .env.example .env               # Windows
+
+Required keys:
+
+    ANTHROPIC_API_KEY=sk-ant-...         # https://console.anthropic.com
+    YOUTUBE_EMAIL=you@example.com
+    YOUTUBE_PASSWORD=your_password
+
+Optional keys (sensible defaults already set):
+
+    YOUTUBER_USER_DATA_DIR=./.yt_profile # persistent Chromium profile
+    YOUTUBER_HEADLESS=false              # set true once everything works
+
+
+6. Run an example
+-----------------
+Simple math agent (no browser, just calls Claude):
+
+    python examples/simple_agent.py
+
+Full YouTuber workflow (opens a real browser window):
+
+    python examples/youtuber_run.py
+
+
+7. Troubleshooting
+------------------
+* "ModuleNotFoundError: agents" — make sure you ran `pip install -e .`
+  from inside the project directory, OR run scripts from the project
+  root with `python -m examples.youtuber_run`.
+
+* "Executable doesn't exist at ...chromium..." — you skipped step 4.
+  Run `playwright install chromium`.
+
+* Google asks for 2FA / CAPTCHA on login — this is expected on the first
+  run. Keep YOUTUBER_HEADLESS=false, solve it manually in the open
+  window, and the persistent profile (./.yt_profile) will remember the
+  device next time.
+
+* A selector fails (e.g. "could not find a Subscribe button") — YouTube
+  changes its DOM frequently. Open agents/youtuber.py, find the relevant
+  tool, and update the selector list.
+
+
+8. Full list of pinned package dependencies
+-------------------------------------------
+Runtime:
+    anthropic       >= 0.49.0
+    python-dotenv   >= 1.0.0
+    playwright      >= 1.44.0
+
+Dev (optional):
+    pytest          >= 8.0
+    pytest-asyncio  >= 0.23
+    ruff            >= 0.4
+
+System (Linux):
+    Chromium runtime libs — installed via `playwright install-deps`.
