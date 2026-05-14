@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import os
 import random
+import re
 import time
-from typing import Any
 
 from playwright.sync_api import BrowserContext, Page, sync_playwright
 
@@ -116,6 +116,51 @@ class YoutuberAgent(BaseAgent):
             except Exception:
                 continue
         return False
+
+    def _studio_goto_basic_info(self) -> Page:
+        """Navigate to YouTube Studio → Customization → Basic info.
+
+        Resolves the real channel ID from the Studio redirect so the URL is
+        always correct regardless of account.  Falls back to sidebar clicks
+        if the URL pattern doesn't match.
+        """
+        page = self._ensure_browser()
+        page.goto("https://studio.youtube.com/", wait_until="domcontentloaded")
+        time.sleep(2)
+
+        # Studio redirects to /channel/{REAL_ID}/ — extract it
+        m = re.search(r"/channel/(UC[^/?#]+)", page.url)
+        if m:
+            cid = m.group(1)
+            page.goto(
+                f"https://studio.youtube.com/channel/{cid}/editing/details",
+                wait_until="domcontentloaded",
+            )
+        else:
+            # Fallback: use the sidebar Customization link
+            for text in ("Customization", "Настройка канала", "Настройка"):
+                try:
+                    link = page.get_by_role("link", name=re.compile(text, re.IGNORECASE)).first
+                    if link.count() > 0:
+                        link.click()
+                        page.wait_for_load_state("domcontentloaded")
+                        break
+                except Exception:
+                    continue
+
+        # Make sure we're on the Basic info tab
+        for tab_text in ("Basic info", "Основная информация"):
+            try:
+                tab = page.get_by_role("tab", name=re.compile(tab_text, re.IGNORECASE)).first
+                if tab.count() > 0:
+                    tab.click()
+                    time.sleep(1)
+                    break
+            except Exception:
+                continue
+
+        time.sleep(1.5)
+        return page
 
     # ------------------------------------------------------------------
     # Phase A — login + per-channel loop
@@ -220,21 +265,38 @@ class YoutuberAgent(BaseAgent):
     )
     def subscribe(self) -> str:
         page = self._ensure_browser()
-        already = [
+        already_sels = [
             'ytd-subscribe-button-renderer button:has-text("Subscribed")',
             'button[aria-label^="Unsubscribe"]',
+            'yt-button-shape button:has-text("Subscribed")',
         ]
-        for sel in already:
+        for sel in already_sels:
             if page.locator(sel).count() > 0:
                 return "already subscribed"
-        sub = [
+        # Role-based check (language-independent "Unsubscribe" aria-pressed pattern)
+        try:
+            if page.get_by_role("button", name=re.compile(r"unsubscribe", re.IGNORECASE)).count() > 0:
+                return "already subscribed"
+        except Exception:
+            pass
+
+        sub_sels = [
             'ytd-subscribe-button-renderer button:has-text("Subscribe")',
             'yt-button-shape button:has-text("Subscribe")',
             'button[aria-label^="Subscribe to"]',
         ]
-        if self._click_first(sub, timeout=8000):
+        if self._click_first(sub_sels, timeout=8000):
             time.sleep(1.0)
             return "ok — subscribed"
+        # Final fallback: role-based
+        try:
+            btn = page.get_by_role("button", name=re.compile(r"^subscribe", re.IGNORECASE)).first
+            btn.wait_for(state="visible", timeout=5000)
+            btn.click()
+            time.sleep(1.0)
+            return "ok — subscribed"
+        except Exception:
+            pass
         return "Error: could not find a Subscribe button"
 
     @tool(
@@ -270,9 +332,9 @@ class YoutuberAgent(BaseAgent):
 
     @tool(
         description=(
-            "Block until the currently playing YouTube video reaches its end. "
-            "Polls the HTML5 video element. Has a hard cap so it won't run "
-            "forever on a livestream — pass max_seconds to override (default 1800)."
+            "Watch the currently playing YouTube video until it ends or the "
+            "cap is reached. Default cap is 480 seconds (8 minutes); pass "
+            "max_seconds to override."
         ),
         input_schema={
             "type": "object",
@@ -280,14 +342,14 @@ class YoutuberAgent(BaseAgent):
                 "max_seconds": {
                     "type": "integer",
                     "minimum": 30,
-                    "maximum": 7200,
-                    "description": "Safety cap in seconds. Default 1800 (30 min).",
+                    "maximum": 480,
+                    "description": "Safety cap in seconds. Default and maximum is 480 (8 min).",
                 }
             },
             "required": [],
         },
     )
-    def watch_current_video_fully(self, max_seconds: int = 1800) -> str:
+    def watch_current_video_fully(self, max_seconds: int = 480) -> str:
         page = self._ensure_browser()
         # Make sure it's playing and not muted-paused
         page.evaluate(
@@ -325,22 +387,44 @@ class YoutuberAgent(BaseAgent):
     )
     def like_current_video(self) -> str:
         page = self._ensure_browser()
-        # Aria labels around Like / Unlike change with language; cover common cases
-        already = [
-            'button[aria-pressed="true"][aria-label^="like" i]',
-            'button[aria-pressed="true"][title*="Unlike" i]',
+        # Scroll down a bit so the like bar is in view
+        page.evaluate("window.scrollBy(0, 300)")
+        time.sleep(0.5)
+
+        already_sels = [
+            'button[aria-pressed="true"][aria-label*="like" i]',
+            'button[aria-pressed="true"][title*="unlike" i]',
         ]
-        for sel in already:
+        for sel in already_sels:
             if page.locator(sel).count() > 0:
                 return "already liked"
-        like = [
-            'segmented-like-dislike-button-view-model button[aria-pressed="false"]',
-            'ytd-toggle-button-renderer button[aria-label^="like" i]',
+        try:
+            if page.get_by_role("button", name=re.compile(r"unlike", re.IGNORECASE)).count() > 0:
+                return "already liked"
+        except Exception:
+            pass
+
+        like_sels = [
+            # Modern segmented like button (2024+)
+            'segmented-like-dislike-button-view-model button:first-child',
+            'like-button-view-model button',
+            # Older renderers
+            'ytd-toggle-button-renderer button[aria-label*="like" i]',
             'button[aria-label^="like this video" i]',
+            'button[aria-label^="Like"]',
         ]
-        if self._click_first(like, timeout=8000):
+        if self._click_first(like_sels, timeout=8000):
             time.sleep(0.8)
             return "ok — liked"
+        # Role-based fallback
+        try:
+            btn = page.get_by_role("button", name=re.compile(r"^like", re.IGNORECASE)).first
+            btn.wait_for(state="visible", timeout=5000)
+            btn.click()
+            time.sleep(0.8)
+            return "ok — liked"
+        except Exception:
+            pass
         return "Error: could not find a Like button"
 
     # ------------------------------------------------------------------
@@ -373,41 +457,34 @@ class YoutuberAgent(BaseAgent):
         input_schema={"type": "object", "properties": {}, "required": []},
     )
     def read_my_channel_about(self) -> str:
-        page = self._ensure_browser()
-        # Open the About dialog / section
-        try:
-            about_btn = page.locator(
-                'yt-description-preview-view-model truncated-text, '
-                'button:has-text("More about this channel"), '
-                'tp-yt-paper-tab:has-text("About"), '
-                'yt-tab-shape:has-text("About")'
-            ).first
-            if about_btn.count() > 0:
-                about_btn.click()
-                time.sleep(1.5)
-        except Exception:
-            pass
+        # Read from Studio Basic info — more stable than the public channel page
+        page = self._studio_goto_basic_info()
 
         bio = ""
         try:
-            bio_el = page.locator(
-                'yt-attributed-string#description, #description-container, ytd-channel-about-metadata-renderer #description'
+            # The description textarea in Studio Basic info
+            desc_box = page.locator(
+                "ytcp-form-textarea #textbox, "
+                "#description-container #textbox, "
+                "textarea[aria-label*='description' i], "
+                "textarea[aria-label*='описание' i]"
             ).first
-            if bio_el.count() > 0:
-                bio = (bio_el.inner_text(timeout=4000) or "").strip()
+            if desc_box.count() > 0:
+                bio = (desc_box.inner_text(timeout=5000) or "").strip()
         except Exception:
             pass
 
         links: list[str] = []
         try:
-            link_els = page.locator(
-                'yt-channel-external-link-view-model a, '
-                'ytd-channel-about-metadata-renderer a.yt-simple-endpoint[href^="http"]'
+            # Links rows in Studio — each external link has a URL input
+            url_inputs = page.locator(
+                "ytcp-url-endpoint-input input, "
+                "input[aria-label*='URL' i][value^='http']"
             )
-            for i in range(link_els.count()):
-                href = link_els.nth(i).get_attribute("href") or ""
-                if href.startswith("http"):
-                    links.append(href)
+            for i in range(url_inputs.count()):
+                val = url_inputs.nth(i).get_attribute("value") or ""
+                if val.startswith("http"):
+                    links.append(val)
         except Exception:
             pass
 
@@ -430,27 +507,31 @@ class YoutuberAgent(BaseAgent):
         },
     )
     def edit_bio(self, new_text: str) -> str:
-        page = self._ensure_browser()
-        page.goto(
-            "https://studio.youtube.com/channel/UC/editing/details",
-            wait_until="domcontentloaded",
-        )
+        page = self._studio_goto_basic_info()
         try:
             desc = page.locator(
-                '#description-container #textbox, #description #textbox, '
-                'ytcp-form-textarea #textbox'
+                "ytcp-form-textarea #textbox, "
+                "#description-container #textbox, "
+                "textarea[aria-label*='description' i], "
+                "textarea[aria-label*='описание' i]"
             ).first
             desc.wait_for(timeout=15000)
             desc.click()
+            # Select-all then replace (works regardless of existing content length)
             page.keyboard.press("Control+A")
             page.keyboard.press("Delete")
+            time.sleep(0.3)
             desc.type(new_text, delay=15)
-            # Publish
-            publish = page.locator(
-                'ytcp-button#publish-button, button:has-text("Publish")'
-            ).first
-            publish.wait_for(timeout=8000)
-            publish.click()
+            # Click Publish / Save
+            for pub_text in ("Publish", "Опубликовать", "Save", "Сохранить"):
+                try:
+                    btn = page.get_by_role("button", name=re.compile(pub_text, re.IGNORECASE)).first
+                    if btn.count() > 0:
+                        btn.wait_for(state="visible", timeout=5000)
+                        btn.click()
+                        break
+                except Exception:
+                    continue
             time.sleep(2.5)
             return "ok — bio updated"
         except Exception as exc:
@@ -524,29 +605,57 @@ class YoutuberAgent(BaseAgent):
         },
     )
     def add_channel_link(self, url: str, name: str) -> str:
-        page = self._ensure_browser()
-        page.goto(
-            "https://studio.youtube.com/channel/UC/editing/details",
-            wait_until="domcontentloaded",
-        )
+        page = self._studio_goto_basic_info()
         try:
-            # Look for "Add link" button on the customization page
-            add_btn = page.locator(
-                'button:has-text("Add link"), ytcp-button:has-text("Add link"), '
-                'button:has-text("Добавить ссылку")'
-            ).first
-            add_btn.wait_for(timeout=15000)
+            # Click "Add link" / "Добавить ссылку"
+            add_btn = None
+            for btn_text in ("Add link", "Добавить ссылку", "Add", "Добавить"):
+                try:
+                    candidate = page.get_by_role(
+                        "button", name=re.compile(btn_text, re.IGNORECASE)
+                    ).first
+                    if candidate.count() > 0:
+                        candidate.wait_for(state="visible", timeout=8000)
+                        add_btn = candidate
+                        break
+                except Exception:
+                    continue
+            if add_btn is None:
+                # CSS fallback
+                add_btn = page.locator(
+                    "ytcp-button:has-text('Add'), ytcp-button:has-text('Добавить')"
+                ).last
             add_btn.click()
-            time.sleep(0.8)
-            # Two fields: title + URL
-            title_field = page.locator('input[aria-label*="title" i], input[placeholder*="title" i], input[aria-label*="назв" i]').first
-            url_field = page.locator('input[aria-label*="url" i], input[placeholder*="url" i], input[type="url"]').first
-            title_field.wait_for(timeout=8000)
+            time.sleep(1.0)
+
+            # After click, new row of inputs appears — fill the LAST (newest) ones
+            title_field = page.locator(
+                "input[aria-label*='title' i], "
+                "input[placeholder*='title' i], "
+                "input[aria-label*='назван' i], "
+                "ytcp-url-endpoint-input input[type='text']:not([type='url'])"
+            ).last
+            url_field = page.locator(
+                "ytcp-url-endpoint-input input[type='url'], "
+                "input[aria-label*='url' i], "
+                "input[placeholder*='url' i]"
+            ).last
+            title_field.wait_for(state="visible", timeout=8000)
             title_field.fill(name)
+            url_field.wait_for(state="visible", timeout=8000)
             url_field.fill(url)
-            publish = page.locator('ytcp-button#publish-button, button:has-text("Publish"), button:has-text("Опубликовать")').first
-            publish.wait_for(timeout=8000)
-            publish.click()
+            time.sleep(0.5)
+
+            # Publish
+            for pub_text in ("Publish", "Опубликовать", "Save", "Сохранить"):
+                try:
+                    btn = page.get_by_role("button", name=re.compile(pub_text, re.IGNORECASE)).first
+                    if btn.count() > 0:
+                        btn.wait_for(state="visible", timeout=5000)
+                        btn.click()
+                        break
+                except Exception:
+                    continue
             time.sleep(2.5)
             return f"ok — link added ({name} -> {url})"
         except Exception as exc:
