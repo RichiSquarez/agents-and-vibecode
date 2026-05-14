@@ -7,3 +7,4 @@ dist/
 venv/
 .pytest_cache/
 .ruff_cache/
+.yt_profile/
