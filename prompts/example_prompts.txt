@@ -1,0 +1,11 @@
+# Пример файла промптов — по одному промпту на строку.
+# Строки начинающиеся с # и пустые строки игнорируются.
+
+a breathtaking fantasy landscape at golden sunset, misty mountains, oil painting style, 8k ultra detailed
+portrait of a cyberpunk samurai, neon lights, heavy rain, cinematic lighting, ultra detailed
+cute robot barista making coffee, cozy cafe interior, warm lighting, studio photography
+ancient Japanese temple surrounded by cherry blossoms, morning fog, watercolor style
+astronaut floating in space with Earth reflected in the helmet visor, photorealistic, 4k
+enchanted forest with glowing mushrooms and fireflies, fantasy art, vibrant colors
+steampunk city at night, airships, gas lamps, detailed illustration
+wolf howling at a full moon on a cliff, dramatic clouds, dark fantasy style
