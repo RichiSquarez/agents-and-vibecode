@@ -20,7 +20,7 @@ import logging
 import os
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -68,7 +68,7 @@ class PhotoRunner:
         output_dir: str | None = None,
         settings: GenerationSettings | None = None,
     ) -> None:
-        self.backend = (backend or os.getenv("PHOTO_BACKEND", "automatic1111")).lower()
+        self.backend = (backend or os.getenv("PHOTO_BACKEND", "forge")).lower()
         self.api_url = (api_url or os.getenv("PHOTO_API_URL", "http://127.0.0.1:7860")).rstrip("/")
         self.output_dir = Path(output_dir or os.getenv("PHOTO_OUTPUT_DIR", "./outputs"))
         self.settings = settings or GenerationSettings()
@@ -77,6 +77,18 @@ class PhotoRunner:
     # ------------------------------------------------------------------
     # Публичный интерфейс
     # ------------------------------------------------------------------
+
+    def _load_prompts(self, prompts_file: str) -> list[str]:
+        path = Path(prompts_file)
+        if not path.exists():
+            logger.error("Файл промптов не найден: %s", prompts_file)
+            return []
+        lines = path.read_text(encoding="utf-8").splitlines()
+        return [
+            line.strip()
+            for line in lines
+            if line.strip() and not line.strip().startswith("#")
+        ]
 
     def run_batch(self, prompts_file: str) -> list[GenerationResult]:
         """Обработать все промпты из файла. Возвращает список результатов."""

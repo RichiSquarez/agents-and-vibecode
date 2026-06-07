@@ -19,7 +19,7 @@ import inspect
 import json
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from openai import OpenAI
@@ -147,12 +147,15 @@ class OllamaAgent:
 
     def _call_tool(self, name: str, tool_input: dict[str, Any]) -> str:
         if name not in self._tools:
+            logger.warning("Unknown tool called: %s", name)
             return f"Error: unknown tool '{name}'"
+        logger.info("[tool] %s(%s)", name, ", ".join(f"{k}={v!r}" for k, v in tool_input.items()))
         self.on_tool_call(name, tool_input)
         try:
             result = self._tools[name].fn(**tool_input)
         except Exception as exc:  # noqa: BLE001
             result = f"Error: {exc}"
+        logger.info("[tool result] %s → %s", name, str(result)[:120])
         self.on_tool_result(name, result)
         return str(result)
 
@@ -175,13 +178,15 @@ class OllamaAgent:
         for _ in range(self.config.max_iterations):
             response = self._client.chat.completions.create(**kwargs)
             msg = response.choices[0].message
-            stop_reason = response.choices[0].finish_reason
 
             if msg.content:
                 final_text = msg.content
+                logger.info("[assistant] %s", msg.content[:200])
                 self.on_assistant_message(final_text)
 
-            if stop_reason != "tool_calls" or not msg.tool_calls:
+            # Используем наличие tool_calls как основной сигнал —
+            # некоторые модели возвращают finish_reason="stop" вместо "tool_calls"
+            if not msg.tool_calls:
                 break
 
             # Добавляем ответ ассистента в историю

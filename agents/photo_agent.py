@@ -291,7 +291,7 @@ class PhotoAgent(OllamaAgent):
     # ------------------------------------------------------------------
 
     def _make_path(self, prompt: str) -> Path:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:19]
         slug = "".join(
             c if c.isalnum() or c in " _-" else "" for c in prompt[:40]
         ).strip().replace(" ", "_")
